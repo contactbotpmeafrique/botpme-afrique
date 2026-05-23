@@ -11,30 +11,42 @@ const UPSTASH_URL = process.env.UPSTASH_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_TOKEN;
 const NOTIFY_NUMBER = '22996003114@c.us';
 
-// ✅ Upstash via API pipeline — fiable pour grandes valeurs
+// ✅ Sanitiser la clé — supprimer les caractères spéciaux
+function sanitizeKey(key) {
+  return key.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+// ✅ Upstash GET
 async function redisGet(key) {
   try {
+    const safeKey = sanitizeKey(key);
     const res = await axios.post(
       UPSTASH_URL,
-      ["GET", key],
+      ["GET", safeKey],
       { headers: { Authorization: `Bearer ${UPSTASH_TOKEN}`, 'Content-Type': 'application/json' } }
     );
     const result = res.data.result;
     if (!result) return null;
-    return JSON.parse(result);
+    // Décoder base64 puis JSON
+    const decoded = Buffer.from(result, 'base64').toString('utf8');
+    return JSON.parse(decoded);
   } catch (e) {
     console.error('redisGet error:', e.message);
     return null;
   }
 }
 
+// ✅ Upstash SET — clé sanitisée + valeur en base64
 async function redisSet(key, value) {
   try {
+    const safeKey = sanitizeKey(key);
+    const encoded = Buffer.from(JSON.stringify(value)).toString('base64');
     await axios.post(
       UPSTASH_URL,
-      ["SET", key, JSON.stringify(value)],
+      ["SET", safeKey, encoded],
       { headers: { Authorization: `Bearer ${UPSTASH_TOKEN}`, 'Content-Type': 'application/json' } }
     );
+    console.log(`[REDIS OK] ${safeKey} sauvegardé`);
   } catch (e) {
     console.error('redisSet error:', e.message);
   }
@@ -75,12 +87,12 @@ app.post('/webhook', async (req, res) => {
       session.langue = null;
     }
 
-    // ✅ Détection langue — uniquement au premier message de la session
+    // ✅ Détection langue — uniquement si pas encore définie
     let langue = session.langue || null;
     if (!langue) {
       const patternEn = /\b(hello|hi|hey|good|morning|evening|help|yes|no|want|need|price|how|what|my|i am|i'm|please|thanks|thank you|okay|ok|sure|great|perfect|nice|i need|i want)\b/i;
       langue = patternEn.test(userMessage) ? 'en' : 'fr';
-      console.log(`[LANGUE] ${from} → ${langue} (msg: "${userMessage}")`);
+      console.log(`[LANGUE] ${from} → ${langue}`);
     }
 
     history.push({ role: 'user', content: userMessage });
@@ -142,7 +154,6 @@ IMPORTANT : L'historique montre tout ce qui a été dit. Ne recommence pas depui
 
     // ✅ Sauvegarder avec langue
     await redisSet(from, { history, lastActive: now, langue });
-    console.log(`[SAVE] ${from} langue=${langue} sauvegardé`);
 
     await sendWhatsApp(from, reply);
 
@@ -182,7 +193,7 @@ IMPORTANT : L'historique montre tout ce qui a été dit. Ne recommence pas depui
     }
 
   } catch (err) {
-    console.error('Erreur:', err.message);
+    console.error('Erreur webhook:', err.message);
   }
 });
 
