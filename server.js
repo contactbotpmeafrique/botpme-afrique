@@ -103,14 +103,14 @@ STRICT RULES:
 SALES SCRIPT (follow in order):
 1. First message → Welcome warmly and ask: "What is your business sector? (pharmacy, clinic, restaurant, shop, other)"
 2. After sector → Ask: "How many customer messages per day? A) Less than 20  B) Between 20 and 100  C) More than 100"
-3. After A/B/C → Recommend the EXACT plan name:
+3. After A/B/C → Recommend using EXACT plan names:
    A = STARTER 50,000 FCFA/month
    B = PRO 100,000 FCFA/month
    C = PREMIUM 200,000 FCFA/month
 4. After recommendation → "Would you like a 7-day FREE trial? Reply YES"
 5. After YES → "A consultant will contact you within 30 minutes. Thank you!"
 
-IMPORTANT: Always use the EXACT plan names: STARTER, PRO, PREMIUM. The history shows everything said. Do not start over.`
+IMPORTANT: Always use EXACT names: STARTER, PRO, PREMIUM. The history shows everything said. Do not start over.`
 
       : `Tu es BOTPME, assistant WhatsApp d'une agence d'automatisation en Afrique.
 
@@ -130,7 +130,7 @@ SCRIPT DANS L'ORDRE :
 4. → "Voulez-vous 7 jours d'essai GRATUIT ? Répondez OUI"
 5. Après OUI → "Un conseiller vous contacte dans 30 min. Merci !"
 
-IMPORTANT : Utilise TOUJOURS les noms exacts : STARTER, PRO, PREMIUM. L'historique montre tout ce qui a été dit. Ne recommence pas depuis le début.`;
+IMPORTANT : Utilise TOUJOURS les noms exacts : STARTER, PRO, PREMIUM. L'historique montre tout. Ne recommence pas depuis le début.`;
 
     const groqResponse = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
@@ -154,14 +154,12 @@ IMPORTANT : Utilise TOUJOURS les noms exacts : STARTER, PRO, PREMIUM. L'historiq
     if (clientDitOui) {
       const clientNum = from.replace('@c.us', '');
 
-      // ✅ Secteur — messages USER uniquement
       const userMessages = history
         .filter(h => h.role === 'user')
         .map(h => h.content)
         .join(' ')
         .toLowerCase();
 
-      // ✅ Plan — messages ASSISTANT uniquement
       const assistantMessages = history
         .filter(h => h.role === 'assistant')
         .map(h => h.content)
@@ -188,7 +186,7 @@ IMPORTANT : Utilise TOUJOURS les noms exacts : STARTER, PRO, PREMIUM. L'historiq
           plan,
           langue: langue === 'en' ? '🇬🇧 Anglais' : '🇫🇷 Français',
           date: new Date().toISOString(),
-          statut: 'Essai accepté 🟢'
+          statut: 'À contacter 🟡'
         });
         await redisSet('leads_list', leads);
       }
@@ -206,10 +204,33 @@ IMPORTANT : Utilise TOUJOURS les noms exacts : STARTER, PRO, PREMIUM. L'historiq
   }
 });
 
+// ✅ Récupérer tous les leads
 app.get('/leads', async (req, res) => {
-  const leads = await redisGet('leads_list') || [];
-  res.json({ leads });
+  try {
+    const leads = await redisGet('leads_list') || [];
+    res.json({ leads });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ✅ Mettre à jour le statut d'un lead
+app.post('/leads/update', async (req, res) => {
+  try {
+    const { numero, statut } = req.body;
+    let leads = await redisGet('leads_list') || [];
+    const index = leads.findIndex(l => l.numero === numero);
+    if (index === -1) return res.status(404).json({ error: 'Lead non trouvé' });
+    leads[index].statut = statut;
+    leads[index].updatedAt = new Date().toISOString();
+    await redisSet('leads_list', leads);
+    console.log(`[LEAD UPDATE] +${numero} → ${statut}`);
+    res.json({ success: true, lead: leads[index] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ BOTPME AFRIQUE actif sur le port ${PORT}`));
+
