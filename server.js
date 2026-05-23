@@ -4,6 +4,15 @@ const axios = require('axios');
 const app = express();
 app.use(express.json());
 
+// ✅ CORS — autoriser le dashboard HTML local
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
+
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const ULTRAMSG_INSTANCE = 'instance177004';
 const ULTRAMSG_TOKEN = 'hf70v24381ystjv6';
@@ -233,4 +242,3 @@ app.post('/leads/update', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ BOTPME AFRIQUE actif sur le port ${PORT}`));
-
