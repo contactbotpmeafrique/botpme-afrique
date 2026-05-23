@@ -11,15 +11,17 @@ const UPSTASH_URL = process.env.UPSTASH_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_TOKEN;
 const NOTIFY_NUMBER = '22996003114@c.us';
 
-// ✅ Upstash Redis — corrigé
+// ✅ Upstash via API pipeline — fiable pour grandes valeurs
 async function redisGet(key) {
   try {
-    const res = await axios.get(
-      `${UPSTASH_URL}/get/${encodeURIComponent(key)}`,
-      { headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` } }
+    const res = await axios.post(
+      UPSTASH_URL,
+      ["GET", key],
+      { headers: { Authorization: `Bearer ${UPSTASH_TOKEN}`, 'Content-Type': 'application/json' } }
     );
-    if (!res.data.result) return null;
-    return JSON.parse(res.data.result);
+    const result = res.data.result;
+    if (!result) return null;
+    return JSON.parse(result);
   } catch (e) {
     console.error('redisGet error:', e.message);
     return null;
@@ -28,11 +30,10 @@ async function redisGet(key) {
 
 async function redisSet(key, value) {
   try {
-    const serialized = JSON.stringify(value);
     await axios.post(
-      `${UPSTASH_URL}/set/${encodeURIComponent(key)}/${encodeURIComponent(serialized)}`,
-      {},
-      { headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` } }
+      UPSTASH_URL,
+      ["SET", key, JSON.stringify(value)],
+      { headers: { Authorization: `Bearer ${UPSTASH_TOKEN}`, 'Content-Type': 'application/json' } }
     );
   } catch (e) {
     console.error('redisSet error:', e.message);
@@ -47,7 +48,7 @@ async function sendWhatsApp(to, body) {
 }
 
 app.get('/', (req, res) => {
-  res.send(`<h2>🤖 BOTPME AFRIQUE</h2><p>Bot WhatsApp actif ✅</p><p>Numéro : +229 97008962</p><p>Instance UltraMsg : ${ULTRAMSG_INSTANCE}</p>`);
+  res.send(`<h2>🤖 BOTPME AFRIQUE</h2><p>Bot WhatsApp actif ✅</p><p>Numéro : +229 97008962</p>`);
 });
 
 app.post('/webhook', async (req, res) => {
@@ -74,13 +75,12 @@ app.post('/webhook', async (req, res) => {
       session.langue = null;
     }
 
-    // ✅ Détection langue — uniquement au premier message
+    // ✅ Détection langue — uniquement au premier message de la session
     let langue = session.langue || null;
     if (!langue) {
       const patternEn = /\b(hello|hi|hey|good|morning|evening|help|yes|no|want|need|price|how|what|my|i am|i'm|please|thanks|thank you|okay|ok|sure|great|perfect|nice|i need|i want)\b/i;
       langue = patternEn.test(userMessage) ? 'en' : 'fr';
-      session.langue = langue;
-      console.log(`Langue détectée pour ${from}: ${langue}`);
+      console.log(`[LANGUE] ${from} → ${langue} (msg: "${userMessage}")`);
     }
 
     history.push({ role: 'user', content: userMessage });
@@ -103,29 +103,29 @@ SALES SCRIPT (follow in order):
    B = PRO 100,000 FCFA/month
    C = PREMIUM 200,000 FCFA/month
 4. After recommendation → "Would you like a 7-day FREE trial? Reply YES"
-5. After YES → "🎉 A consultant will contact you within 30 minutes. Thank you!"
+5. After YES → "A consultant will contact you within 30 minutes. Thank you!"
 
-IMPORTANT: The history below shows everything already said. Do not start over.`
+IMPORTANT: The history shows everything said. Do not start over.`
 
       : `Tu es BOTPME, assistant WhatsApp d'une agence d'automatisation en Afrique.
 
 RÈGLES ABSOLUES :
 - Réponds TOUJOURS en français, maximum 3 lignes
 - Ne répète JAMAIS le message de bienvenue si la conversation est déjà commencée
-- Lis l'historique de la conversation et continue exactement là où tu en es
+- Lis l'historique et continue exactement là où tu en es
 - Ne pose jamais deux fois la même question
 
-SCRIPT À SUIVRE DANS L'ORDRE :
+SCRIPT DANS L'ORDRE :
 1. Premier message → Saluer UNE SEULE FOIS et demander le secteur : pharmacie, clinique, restaurant, boutique ou autre ?
-2. Après secteur reçu → Demander : "Combien de messages par jour ? A) Moins de 20  B) Entre 20 et 100  C) Plus de 100"
-3. Après A/B/C reçu → Recommander :
+2. Après secteur → "Combien de messages par jour ? A) Moins de 20  B) Entre 20 et 100  C) Plus de 100"
+3. Après A/B/C → Recommander :
    A = STARTER 50 000 FCFA/mois
    B = PRO 100 000 FCFA/mois
    C = PREMIUM 200 000 FCFA/mois
-4. Après recommandation → "Voulez-vous 7 jours d'essai GRATUIT ? Répondez OUI"
-5. Après OUI → "🎉 Un conseiller vous contacte dans 30 min. Merci !"
+4. → "Voulez-vous 7 jours d'essai GRATUIT ? Répondez OUI"
+5. Après OUI → "Un conseiller vous contacte dans 30 min. Merci !"
 
-IMPORTANT : L'historique ci-dessous montre tout ce qui a déjà été dit. Ne recommence pas depuis le début.`;
+IMPORTANT : L'historique montre tout ce qui a été dit. Ne recommence pas depuis le début.`;
 
     const groqResponse = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
@@ -138,11 +138,11 @@ IMPORTANT : L'historique ci-dessous montre tout ce qui a déjà été dit. Ne re
     );
 
     const reply = groqResponse.data.choices[0].message.content;
-
     history.push({ role: 'assistant', content: reply });
 
-    // ✅ Sauvegarder session correctement
+    // ✅ Sauvegarder avec langue
     await redisSet(from, { history, lastActive: now, langue });
+    console.log(`[SAVE] ${from} langue=${langue} sauvegardé`);
 
     await sendWhatsApp(from, reply);
 
@@ -181,10 +181,8 @@ IMPORTANT : L'historique ci-dessous montre tout ce qui a déjà été dit. Ne re
       );
     }
 
-    console.log(`[${new Date().toISOString()}] ${from} (${langue}) → ${reply.slice(0, 60)}...`);
-
   } catch (err) {
-    console.error('Erreur webhook:', err.message);
+    console.error('Erreur:', err.message);
   }
 });
 
