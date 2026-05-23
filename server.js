@@ -11,26 +11,34 @@ const UPSTASH_URL = process.env.UPSTASH_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_TOKEN;
 const NOTIFY_NUMBER = '22996003114@c.us';
 
-// ✅ Upstash Redis helpers
+// ✅ Upstash Redis — corrigé
 async function redisGet(key) {
   try {
     const res = await axios.get(
       `${UPSTASH_URL}/get/${encodeURIComponent(key)}`,
       { headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` } }
     );
-    return res.data.result ? JSON.parse(res.data.result) : null;
-  } catch { return null; }
+    if (!res.data.result) return null;
+    return JSON.parse(res.data.result);
+  } catch (e) {
+    console.error('redisGet error:', e.message);
+    return null;
+  }
 }
 
 async function redisSet(key, value) {
-  await axios.post(
-    `${UPSTASH_URL}/set/${encodeURIComponent(key)}`,
-    JSON.stringify(JSON.stringify(value)),
-    { headers: { Authorization: `Bearer ${UPSTASH_TOKEN}`, 'Content-Type': 'application/json' } }
-  );
+  try {
+    const serialized = JSON.stringify(value);
+    await axios.post(
+      `${UPSTASH_URL}/set/${encodeURIComponent(key)}/${encodeURIComponent(serialized)}`,
+      {},
+      { headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` } }
+    );
+  } catch (e) {
+    console.error('redisSet error:', e.message);
+  }
 }
 
-// ✅ Envoyer un message WhatsApp
 async function sendWhatsApp(to, body) {
   await axios.post(
     `https://api.ultramsg.com/${ULTRAMSG_INSTANCE}/messages/chat`,
@@ -38,23 +46,15 @@ async function sendWhatsApp(to, body) {
   );
 }
 
-// ✅ Page d'accueil
 app.get('/', (req, res) => {
-  res.send(`
-    <h2>🤖 BOTPME AFRIQUE</h2>
-    <p>Bot WhatsApp actif ✅</p>
-    <p>Numéro : +229 97008962</p>
-    <p>Instance UltraMsg : ${ULTRAMSG_INSTANCE}</p>
-  `);
+  res.send(`<h2>🤖 BOTPME AFRIQUE</h2><p>Bot WhatsApp actif ✅</p><p>Numéro : +229 97008962</p><p>Instance UltraMsg : ${ULTRAMSG_INSTANCE}</p>`);
 });
 
-// ✅ Webhook principal
 app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 
   try {
     const data = req.body;
-
     if (!data.data || data.data.type !== 'chat' || data.data.fromMe === true) return;
 
     const userMessage = data.data.body;
@@ -74,18 +74,18 @@ app.post('/webhook', async (req, res) => {
       session.langue = null;
     }
 
-    // ✅ Détection langue sans appel API
+    // ✅ Détection langue — uniquement au premier message
     let langue = session.langue || null;
-    if (!langue || history.length === 0) {
+    if (!langue) {
       const patternEn = /\b(hello|hi|hey|good|morning|evening|help|yes|no|want|need|price|how|what|my|i am|i'm|please|thanks|thank you|okay|ok|sure|great|perfect|nice|i need|i want)\b/i;
       langue = patternEn.test(userMessage) ? 'en' : 'fr';
       session.langue = langue;
+      console.log(`Langue détectée pour ${from}: ${langue}`);
     }
 
     history.push({ role: 'user', content: userMessage });
     if (history.length > 20) history = history.slice(-20);
 
-    // ✅ Prompt selon langue
     const systemPrompt = langue === 'en'
       ? `You are BOTPME, a WhatsApp assistant for a business automation agency in Africa.
 
@@ -94,7 +94,6 @@ STRICT RULES:
 - NEVER repeat the welcome message if the conversation has already started
 - Read the conversation history and continue exactly where you left off
 - Never ask the same question twice
-- If the client switches to French, respond in French immediately
 
 SALES SCRIPT (follow in order):
 1. First message → Welcome warmly and ask: "What is your business sector? (pharmacy, clinic, restaurant, shop, other)"
@@ -115,7 +114,6 @@ RÈGLES ABSOLUES :
 - Ne répète JAMAIS le message de bienvenue si la conversation est déjà commencée
 - Lis l'historique de la conversation et continue exactement là où tu en es
 - Ne pose jamais deux fois la même question
-- Si le client écrit en anglais, bascule immédiatement en anglais
 
 SCRIPT À SUIVRE DANS L'ORDRE :
 1. Premier message → Saluer UNE SEULE FOIS et demander le secteur : pharmacie, clinique, restaurant, boutique ou autre ?
@@ -129,35 +127,25 @@ SCRIPT À SUIVRE DANS L'ORDRE :
 
 IMPORTANT : L'historique ci-dessous montre tout ce qui a déjà été dit. Ne recommence pas depuis le début.`;
 
-    // ✅ Appel Groq unique
     const groqResponse = await axios.post(
       'https://api.groq.com/openai/v1/chat/completions',
       {
         model: 'llama-3.1-8b-instant',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          ...history
-        ],
+        messages: [{ role: 'system', content: systemPrompt }, ...history],
         max_tokens: 300
       },
-      {
-        headers: {
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
+      { headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' } }
     );
 
     const reply = groqResponse.data.choices[0].message.content;
 
-    // Sauvegarder session
     history.push({ role: 'assistant', content: reply });
-    await redisSet(from, { history, lastActive: now, langue: session.langue });
 
-    // Envoyer réponse au client
+    // ✅ Sauvegarder session correctement
+    await redisSet(from, { history, lastActive: now, langue });
+
     await sendWhatsApp(from, reply);
 
-    // ✅ Détecter OUI / YES
     const clientDitOui = msgLower === 'oui' || msgLower === 'yes' ||
                          msgLower.includes('oui') || msgLower.includes('yes');
 
@@ -175,14 +163,11 @@ IMPORTANT : L'historique ci-dessous montre tout ce qui a déjà été dit. Ne re
       else if (allText.includes('pro')) plan = 'PRO - 100 000 FCFA';
       else if (allText.includes('premium')) plan = 'PREMIUM - 200 000 FCFA';
 
-      // Sauvegarder lead
       let leads = await redisGet('leads_list') || [];
       if (!Array.isArray(leads)) leads = [];
       if (!leads.find(l => l.numero === clientNum)) {
         leads.push({
-          numero: clientNum,
-          secteur,
-          plan,
+          numero: clientNum, secteur, plan,
           langue: langue === 'en' ? '🇬🇧 Anglais' : '🇫🇷 Français',
           date: new Date().toISOString(),
           statut: 'Essai accepté 🟢'
@@ -190,19 +175,19 @@ IMPORTANT : L'historique ci-dessous montre tout ce qui a déjà été dit. Ne re
         await redisSet('leads_list', leads);
       }
 
-      // Notification WhatsApp
       await sendWhatsApp(
         NOTIFY_NUMBER,
         `🔥 NOUVEAU LEAD BOTPME !\n\n📱 Numéro : +${clientNum}\n🏢 Secteur : ${secteur}\n💼 Plan : ${plan}\n🌍 Langue : ${langue === 'en' ? 'Anglais' : 'Français'}\n⏰ À contacter dans 30 minutes !`
       );
     }
 
+    console.log(`[${new Date().toISOString()}] ${from} (${langue}) → ${reply.slice(0, 60)}...`);
+
   } catch (err) {
     console.error('Erreur webhook:', err.message);
   }
 });
 
-// ✅ API pour le dashboard
 app.get('/leads', async (req, res) => {
   const leads = await redisGet('leads_list') || [];
   res.json({ leads });
